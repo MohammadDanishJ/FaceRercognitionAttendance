@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Face Attendance</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Face Attendance</h1>
+        <div class="video-container">
+            <img id="video-frame" alt="Video Frame">
+        </div>
+    </div>
+
+    <script>
+        const videoFrame = document.getElementById("video-frame");
+
+        function loadVideo() {
+            videoFrame.src = "{{ url_for('video_feed') }}";
+            setTimeout(() => {
+                videoFrame.onload = () => {
+                    setTimeout(loadVideo, 0);
+                };
+            }, 100);
+        }
+
+        loadVideo();
+    </script>
+</body>
+</html>

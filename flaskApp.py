@@ -1,3 +1,4 @@
+from flask import Flask, render_template, Response
 import os
 import pickle
 import numpy as np
@@ -10,6 +11,8 @@ from firebase_admin import db
 from firebase_admin import storage
 import numpy as np
 from datetime import datetime
+
+app = Flask(__name__)
 
 cred = credentials.Certificate("serviceAccountKey.json")
 firebase_admin.initialize_app(cred, {
@@ -32,7 +35,6 @@ modePathList = os.listdir(folderModePath)
 imgModeList = []
 for path in modePathList:
     imgModeList.append(cv2.imread(os.path.join(folderModePath, path)))
-# print(len(imgModeList))
 
 # Load the encoding file
 print("Loading Encode File ...")
@@ -40,7 +42,6 @@ file = open('EncodeFile.p', 'rb')
 encodeListKnownWithIds = pickle.load(file)
 file.close()
 encodeListKnown, studentIds = encodeListKnownWithIds
-# print(studentIds)
 print("Encode File Loaded")
 
 modeType = 0
@@ -48,45 +49,48 @@ counter = 0
 id = -1
 imgStudent = []
 
-while True:
-    success, img = cap.read()
+def gen_frames():
+    global imgBackground, modeType, counter
 
-    imgS = cv2.resize(img, (0, 0), None, 0.25, 0.25)
-    imgS = cv2.cvtColor(imgS, cv2.COLOR_BGR2RGB)
+    while True:
+        success, img = cap.read()
 
-    faceCurFrame = face_recognition.face_locations(imgS)
-    encodeCurFrame = face_recognition.face_encodings(imgS, faceCurFrame)
+        if not success:
+            break
 
-    imgBackground[162:162 + 480, 55:55 + 640] = img
-    imgBackground[44:44 + 633, 808:808 + 414] = imgModeList[modeType]
+        if imgBackground is None:
+            imgBackground = cv2.imread('Resources/background.png')
 
-    if faceCurFrame:
-        for encodeFace, faceLoc in zip(encodeCurFrame, faceCurFrame):
-            matches = face_recognition.compare_faces(encodeListKnown, encodeFace)
-            faceDis = face_recognition.face_distance(encodeListKnown, encodeFace)
-            # print("matches", matches)
-            # print("faceDis", faceDis)
+        imgS = cv2.resize(img, (0, 0), None, 0.25, 0.25)
+        imgS = cv2.cvtColor(imgS, cv2.COLOR_BGR2RGB)
 
-            matchIndex = np.argmin(faceDis)
-            # print("Match Index", matchIndex)
+        faceCurFrame = face_recognition.face_locations(imgS)
+        encodeCurFrame = face_recognition.face_encodings(imgS, faceCurFrame)
 
-            if matches[matchIndex]:
-                # print("Known Face Detected")
-                # print(studentIds[matchIndex])
-                y1, x2, y2, x1 = faceLoc
-                y1, x2, y2, x1 = y1 * 4, x2 * 4, y2 * 4, x1 * 4
-                bbox = 55 + x1, 162 + y1, x2 - x1, y2 - y1
-                imgBackground = cvzone.cornerRect(imgBackground, bbox, rt=0)
-                id = studentIds[matchIndex]
-                if counter == 0:
-                    cvzone.putTextRect(imgBackground, "Loading", (275, 400))
-                    cv2.imshow("Face Attendance", imgBackground)
-                    cv2.waitKey(1)
-                    counter = 1
-                    modeType = 1
+        imgBackground[162:162 + 480, 55:55 + 640] = img
+        imgBackground[44:44 + 633, 808:808 + 414] = imgModeList[modeType]
+
+        if faceCurFrame:
+            for encodeFace, faceLoc in zip(encodeCurFrame, faceCurFrame):
+                matches = face_recognition.compare_faces(encodeListKnown, encodeFace)
+                faceDis = face_recognition.face_distance(encodeListKnown, encodeFace)
+
+                matchIndex = np.argmin(faceDis)
+
+                if matches[matchIndex]:
+                    y1, x2, y2, x1 = faceLoc
+                    y1, x2, y2, x1 = y1 * 4, x2 * 4, y2 * 4, x1 * 4
+                    bbox = 55 + x1, 162 + y1, x2 - x1, y2 - y1
+                    imgBackground = cvzone.cornerRect(imgBackground, bbox, rt=0)
+                    id = studentIds[matchIndex]
+                    if counter == 0:
+                        cvzone.putTextRect(imgBackground, "Loading", (275, 400))
+                        cv2.imshow("Face Attendance", imgBackground)
+                        cv2.waitKey(1)
+                        counter = 1
+                        modeType = 1
 
         if counter != 0:
-
             if counter == 1:
                 # Get the Data
                 studentInfo = db.reference(f'Students/{id}').get()
@@ -96,8 +100,7 @@ while True:
                 array = np.frombuffer(blob.download_as_string(), np.uint8)
                 imgStudent = cv2.imdecode(array, cv2.COLOR_BGRA2BGR)
                 # Update data of attendance
-                datetimeObject = datetime.strptime(studentInfo['last_attendance_time'],
-                                                   "%Y-%m-%d %H:%M:%S")
+                datetimeObject = datetime.strptime(studentInfo['last_attendance_time'], "%Y-%m-%d %H:%M:%S")
                 secondsElapsed = (datetime.now() - datetimeObject).total_seconds()
                 print(secondsElapsed)
                 # mark attendance after 300 seconds
@@ -113,7 +116,6 @@ while True:
                     imgBackground[44:44 + 633, 808:808 + 414] = imgModeList[modeType]
 
             if modeType != 3:
-
                 if 10 < counter < 20:
                     modeType = 2
 
@@ -148,9 +150,24 @@ while True:
                     studentInfo = []
                     imgStudent = []
                     imgBackground[44:44 + 633, 808:808 + 414] = imgModeList[modeType]
-    else:
-        modeType = 0
-        counter = 0
-    # cv2.imshow("Webcam", img)
-    cv2.imshow("Face Attendance", imgBackground)
-    cv2.waitKey(1)
+        else:
+            modeType = 0
+            counter = 0
+
+        ret, frame = cv2.imencode('.jpg', imgBackground)
+        frame = frame.tobytes()
+        yield (b'--frame\r\n'
+               b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
+
+
+@app.route('/')
+def index():
+    return render_template('index.html')
+
+
+@app.route('/video_feed')
+def video_feed():
+    return Response(gen_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
+
+if __name__ == '__main__':
+    app.run()
