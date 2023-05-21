@@ -11,6 +11,7 @@ from firebase_admin import db
 from firebase_admin import storage
 import numpy as np
 from datetime import datetime
+import threading
 
 app = Flask(__name__)
 
@@ -49,8 +50,11 @@ counter = 0
 id = -1
 imgStudent = []
 
-def gen_frames():
-    global imgBackground, modeType, counter
+lock = threading.Lock()
+
+
+def process_frames():
+    global imgBackground, modeType, counter, id, imgStudent
 
     while True:
         success, img = cap.read()
@@ -156,8 +160,18 @@ def gen_frames():
 
         ret, frame = cv2.imencode('.jpg', imgBackground)
         frame = frame.tobytes()
-        yield (b'--frame\r\n'
-               b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
+
+        with lock:
+            global frame_buffer
+            frame_buffer = frame
+
+
+def gen_frames():
+    while True:
+        with lock:
+            if frame_buffer is not None:
+                yield (b'--frame\r\n'
+                       b'Content-Type: image/jpeg\r\n\r\n' + frame_buffer + b'\r\n')
 
 
 @app.route('/')
@@ -165,9 +179,17 @@ def index():
     return render_template('index.html')
 
 
+@app.route('/style.css')
+def styles():
+    return app.send_static_file('style.css')
+
+
 @app.route('/video_feed')
 def video_feed():
     return Response(gen_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
 
+
 if __name__ == '__main__':
+    frame_buffer = None
+    threading.Thread(target=process_frames, daemon=True).start()
     app.run()
